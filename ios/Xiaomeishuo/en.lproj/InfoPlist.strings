@@ -1,0 +1,4 @@
+"CFBundleDisplayName" = "Xiaomeishuo";
+"NSCameraUsageDescription" = "Capture a photo you choose for editing.";
+"NSPhotoLibraryAddUsageDescription" = "Save AI images you approve to Photos.";
+"NSPhotoLibraryUsageDescription" = "Choose aesthetic references and photos for your personal profile, edits and target previews.";

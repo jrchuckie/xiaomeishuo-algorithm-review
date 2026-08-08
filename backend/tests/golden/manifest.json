@@ -1,0 +1,16 @@
+[
+  {"id": "safe_normal", "expectation": "eligible"},
+  {"id": "head_top_cropped", "expectation": "head_or_hair_cropped"},
+  {"id": "hair_corner_cropped", "expectation": "head_or_hair_cropped"},
+  {"id": "face_or_head_widened", "expectation": "face_or_head_widened"},
+  {"id": "cheekbone_expanded", "expectation": "cheekbone_expanded"},
+  {"id": "cheek_hollowed", "expectation": "cheek_hollowed"},
+  {"id": "unselected_eyes_enlarged", "expectation": "locked_region_changed"},
+  {"id": "identity_drift", "expectation": "identity_drift"},
+  {"id": "visible_skin_only", "expectation": "target_change_below_threshold"},
+  {"id": "visible_target_met", "expectation": "eligible"},
+  {"id": "medical_multi_direction_complete", "expectation": "all_selected_retained"},
+  {"id": "all_candidates_fail", "expectation": "safe_original"},
+  {"id": "localized_quality_summary", "expectation": "zh_and_en"},
+  {"id": "revision_uses_original_baseline", "expectation": "no_cumulative_drift"}
+]

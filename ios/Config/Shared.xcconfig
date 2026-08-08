@@ -1,0 +1,4 @@
+// Safe defaults committed to Git. Local secrets belong in Cloud.xcconfig.
+XMS_API_HOST =
+XMS_APP_ACCESS_TOKEN =
+#include? "Cloud.xcconfig"

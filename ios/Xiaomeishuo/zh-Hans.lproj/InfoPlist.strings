@@ -1,0 +1,4 @@
+"CFBundleDisplayName" = "小美说";
+"NSPhotoLibraryUsageDescription" = "选择你主动提供的审美参考图和待修照片，用于生成个人审美档案与修图结果。";
+"NSPhotoLibraryAddUsageDescription" = "将你确认的 AI 修图结果保存到系统相册。";
+"NSCameraUsageDescription" = "拍摄你主动选择的待修照片。";

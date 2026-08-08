@@ -1,0 +1,30 @@
+.DS_Store
+
+# Secrets and local configuration
+.env
+.env.*
+!.env.example
+ios/Config/Cloud.xcconfig
+*.pem
+*.p8
+*.p12
+*.mobileprovision
+GoogleService-Info.plist
+
+# Python
+.venv/
+__pycache__/
+.pytest_cache/
+*.pyc
+
+# Xcode
+DerivedData/
+DeviceDerivedData/
+build/
+*.xcuserstate
+xcuserdata/
+
+# Local outputs
+*.log
+*.zip
+tmp/

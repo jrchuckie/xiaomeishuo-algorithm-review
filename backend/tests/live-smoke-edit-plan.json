@@ -1,0 +1,31 @@
+{
+  "id": "live-smoke-v120-2",
+  "headline": "Controlled visible edit",
+  "summary": "Judge pipeline smoke test",
+  "changes": [
+    {
+      "id": "chin",
+      "area": "chin and jawline",
+      "title": "Clearer chin transition and jawline",
+      "rationale": "controlled non-private smoke asset",
+      "instruction": "Only make the chin edge and jawline transition visibly clearer while preserving identity; do not alter eyes, nose or lips",
+      "enabled": true
+    }
+  ],
+  "locked_regions": [
+    "identity",
+    "eyes",
+    "brows",
+    "nose",
+    "lips",
+    "cheekbones",
+    "hair",
+    "background",
+    "composition",
+    "frame",
+    "clothing",
+    "accessories"
+  ],
+  "prompt_version": "edit-plan-live-smoke-v120-2",
+  "intensity": "visible"
+}

@@ -1,0 +1,6 @@
+/*
+ Simplified Chinese is the source language. Reader-facing source keys are
+ already written in Simplified Chinese, so missing entries intentionally
+ fall back to the key itself.
+*/
+"探索" = "探索";
