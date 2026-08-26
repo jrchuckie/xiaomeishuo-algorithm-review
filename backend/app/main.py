@@ -24,14 +24,26 @@ from .uploads import read_image
 settings = get_settings()
 
 if settings.model_mode == "live":
-    missing = [
-        name
-        for name, value in (
-            ("OPENAI_API_KEY", settings.openai_api_key),
-            ("OPENAI_ANALYSIS_MODEL", settings.openai_analysis_model),
+    required = [
+        ("OPENAI_API_KEY", settings.openai_api_key),
+        ("OPENAI_ANALYSIS_MODEL", settings.openai_analysis_model),
+    ]
+    if settings.image_provider == "gemini":
+        required.extend([
             ("GEMINI_API_KEY", settings.gemini_api_key),
             ("GEMINI_IMAGE_MODEL", settings.gemini_image_model),
-        )
+        ])
+    elif settings.image_provider == "openai":
+        required.append(("OPENAI_IMAGE_MODEL", settings.openai_image_model))
+    else:
+        required.extend([
+            ("QWEN_API_KEY", settings.qwen_api_key),
+            ("QWEN_IMAGE_ENDPOINT", settings.qwen_image_endpoint),
+            ("QWEN_IMAGE_MODEL", settings.qwen_image_model),
+        ])
+    missing = [
+        name
+        for name, value in required
         if not value
     ]
     if missing:

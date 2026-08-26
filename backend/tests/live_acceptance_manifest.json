@@ -1,0 +1,53 @@
+{
+  "version": "v1",
+  "description": "Synthetic, non-private portraits for live generation acceptance. All people are fictional and AI-generated.",
+  "acceptance": {
+    "eligible_rate_min": 0.8,
+    "hard_failure_display_rate_max": 0.0,
+    "p50_latency_seconds_max": 90,
+    "p95_latency_seconds_max": 180
+  },
+  "cases": [
+    {
+      "id": "night-complex-light",
+      "source": "live_assets/synthetic-night-female.jpg",
+      "target_area": "头脸比例与下颌线",
+      "title": "头脸比例更轻盈、下颌线更利落",
+      "instruction": "在 1024 像素宽输出上，从嘴角高度以下开始，把左右下半脸外轮廓各向内移动约 12–16 像素，并平滑过渡到原下巴；下巴边缘更清晰但不变尖。头顶、头发、颧骨最宽点和原构图必须不动。必须产生一眼可辨的结构变化，不能用肤质、光线或锐化代替，同时仍然明显是同一个人。"
+    },
+    {
+      "id": "car-daylight",
+      "source": "live_assets/synthetic-car-male.jpg",
+      "target_area": "下巴与下颌线",
+      "title": "下巴衔接更清楚、下颌边界更干净",
+      "instruction": "在 1024 像素宽输出上，从嘴角高度以下开始，把下颌外轮廓每侧向内移动约 10–14 像素，并平滑连接原下巴；不改变眼睛、鼻子、嘴唇、颧骨、上半脸和表情。效果必须一眼可见但不能像换脸。"
+    },
+    {
+      "id": "side-window-light",
+      "source": "live_assets/synthetic-side-female.jpg",
+      "target_area": "下颌缘与下巴比例",
+      "title": "侧转角度下轮廓更流畅",
+      "instruction": "在 1024 像素宽输出上，只把可见侧从嘴角以下到下巴的下颌缘向内移动约 10–14 像素，并做自然连续过渡；变化必须一眼可见。保持原有面部不对称、眼型眼距、鼻口、颧骨、肤质、发型与侧转角度。"
+    }
+  ],
+  "revision_cases": [
+    {
+      "id": "night-v2-strengthen-lock-eyes",
+      "base_case": "night-complex-light",
+      "previous": "../../docs/acceptance-assets/20260826/night-complex-light-result.jpg",
+      "feedback": "下颌线比上一版再清楚一个小档位，但眼睛、鼻子、嘴唇、颧骨、头发和构图完全不要动，仍然必须是本人。"
+    },
+    {
+      "id": "car-v2-strengthen-lock-features",
+      "base_case": "car-daylight",
+      "previous": "../../docs/acceptance-assets/20260826/car-daylight-result.jpg",
+      "feedback": "下巴与下颌交界再清楚一点，幅度保持自然；眼睛、鼻子、嘴、表情、颧骨和上半脸恢复并锁定到原图。"
+    },
+    {
+      "id": "side-v2-visible-side-only",
+      "base_case": "side-window-light",
+      "previous": "../../docs/acceptance-assets/20260826/side-window-light-result.jpg",
+      "feedback": "只加强可见侧嘴角以下的下颌缘，其他地方不要动，尤其保持原图的侧转角度、眼型、鼻口、发型和不对称。"
+    }
+  ]
+}

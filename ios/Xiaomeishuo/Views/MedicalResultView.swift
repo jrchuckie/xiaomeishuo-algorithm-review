@@ -16,6 +16,7 @@ struct MedicalResultView: View {
 
     @State private var sourceImage: UIImage?
     @State private var resultImage: UIImage?
+    @State private var explanationImage: UIImage?
     @State private var comparisonValue = 0.5
     @State private var feedback = ""
     @State private var nextResult: GenerationResultDTO?
@@ -51,6 +52,36 @@ struct MedicalResultView: View {
                             after: resultImage,
                             value: $comparisonValue
                         )
+                        .padding(.horizontal, AppTheme.Spacing.xl)
+                    }
+
+                    if let explanationImage, result.resultMode != "safe_original" {
+                        VStack(alignment: .leading, spacing: AppTheme.Spacing.sm) {
+                            VStack(alignment: .leading, spacing: 4) {
+                                Text("变化说明图")
+                                    .font(.headline)
+                                Text("自动标出本轮方案涉及的区域；标识不会写入干净效果图。")
+                                    .font(.footnote)
+                                    .foregroundStyle(AppTheme.muted)
+                            }
+                            Image(uiImage: explanationImage)
+                                .resizable()
+                                .scaledToFit()
+                                .clipShape(
+                                    RoundedRectangle(
+                                        cornerRadius: AppTheme.Radius.md,
+                                        style: .continuous
+                                    )
+                                )
+                            Button {
+                                Task { await saveExplanationToPhotos() }
+                            } label: {
+                                Label("保存变化说明图", systemImage: "square.and.arrow.down")
+                            }
+                            .buttonStyle(SecondaryButtonStyle())
+                            .disabled(isWorking)
+                        }
+                        .card()
                         .padding(.horizontal, AppTheme.Spacing.xl)
                     }
 
@@ -176,6 +207,13 @@ struct MedicalResultView: View {
         {
             resultImage = UIImage(data: data)
         }
+        if let sourceImage, let resultImage, result.resultMode != "safe_original" {
+            explanationImage = EffectExplanationRenderer.render(
+                before: sourceImage,
+                after: resultImage,
+                callouts: EffectCalloutFactory.medical(plan: plan)
+            )
+        }
     }
 
     @MainActor
@@ -236,6 +274,27 @@ struct MedicalResultView: View {
             statusMessage = String(localized: "已保存到系统相册")
         } catch {
             errorMessage = String(localized: "保存失败，请稍后再试。")
+        }
+    }
+
+    @MainActor
+    private func saveExplanationToPhotos() async {
+        guard let explanationImage else { return }
+        isWorking = true
+        errorMessage = nil
+        defer { isWorking = false }
+        let authorization = await PHPhotoLibrary.requestAuthorization(for: .addOnly)
+        guard authorization == .authorized || authorization == .limited else {
+            errorMessage = String(localized: "没有相册保存权限。请在系统设置中允许“小美说”添加照片。")
+            return
+        }
+        do {
+            try await PHPhotoLibrary.shared().performChanges {
+                PHAssetChangeRequest.creationRequestForAsset(from: explanationImage)
+            }
+            statusMessage = String(localized: "变化说明图已保存到系统相册")
+        } catch {
+            errorMessage = String(localized: "变化说明图保存失败，请稍后再试。")
         }
     }
 

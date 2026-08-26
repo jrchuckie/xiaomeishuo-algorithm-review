@@ -19,3 +19,12 @@ jobs:
           python -m pip install -r backend/requirements.txt
           cd backend
           MODEL_MODE=mock python -m pytest -q
+
+  ios-typecheck:
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install XcodeGen
+        run: brew install xcodegen
+      - name: Type-check iPhone app against iOS 17 SDK
+        run: bash ios/check-ios.sh

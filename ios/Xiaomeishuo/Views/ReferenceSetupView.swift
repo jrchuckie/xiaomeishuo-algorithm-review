@@ -247,9 +247,11 @@ struct ReferenceSetupView: View {
             for path in localPaths {
                 urls.append(try await LocalImageStore.shared.url(for: path))
             }
-            let calibration = editVersions
-                .map(\.userFeedback)
-                .filter { !$0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
+            // editVersions is newest-first. Keep the newest useful signals,
+            // then send them oldest-to-newest as a stable preference timeline.
+            let calibration = Array(
+                editVersions.compactMap(\.calibrationSignal).prefix(12).reversed()
+            )
             let profile = try await APIClient.shared.createProfile(
                 referenceURLs: urls,
                 calibrationHistory: calibration

@@ -88,6 +88,10 @@ struct GenerationResultDTO: Codable, Identifiable, Hashable {
     var qualityVerdict: QualityVerdictDTO? = nil
     var candidateCount: Int? = nil
     var correctionRounds: Int? = nil
+    var semanticJudgeCount: Int? = nil
+    var deterministicRejectCount: Int? = nil
+    var stageTimingsMs: [String: Int]? = nil
+    var generationProvider: String? = nil
 }
 
 enum APIIntensity: String, Hashable {

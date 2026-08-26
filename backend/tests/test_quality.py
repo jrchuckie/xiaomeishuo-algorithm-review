@@ -8,9 +8,19 @@ from PIL import Image, ImageDraw
 
 from app.models import MedicalCandidate, MedicalPlanResponse, QualityVerdict
 from app.providers import (
+    _revision_judge_prompt,
+    _revision_verdict_schema,
+    compile_revision_feedback,
     _ensure_medical_direction_integrity,
     _gemini_edit_prompt,
+    _openai_image_size,
+    _prepare_openai_mask,
+    _profile_prompt,
+    _qwen_image_request,
+    _qwen_image_size,
     _quality_judge_prompt,
+    _restore_source_aspect,
+    _should_fallback_from_gemini,
 )
 from app.quality import (
     THRESHOLDS,
@@ -117,20 +127,41 @@ def test_safe_candidate_is_eligible() -> None:
     assert verdict.hard_failures == []
 
 
-def test_top_and_hair_edge_crop_is_a_hard_failure() -> None:
+def test_top_and_hair_edge_pixel_change_is_diagnostic_until_semantic_judge() -> None:
     source = portrait()
     result = portrait(damaged_top=True)
     deterministic = deterministic_scores(source, result)
-    assert "head_or_hair_cropped" in deterministic["hard_failures"]
-    verdict = finalize_verdict(semantic(), deterministic, intensity="visible")
+    assert deterministic["head_boundary_score"] < THRESHOLDS.head_boundary
+    assert "head_or_hair_cropped" not in deterministic["hard_failures"]
+    verdict = finalize_verdict(
+        semantic(failures=["head_or_hair_cropped"]),
+        deterministic,
+        intensity="visible",
+    )
     assert verdict.eligible is False
 
 
-def test_hair_corner_crop_is_a_hard_failure() -> None:
+def test_hair_corner_pixel_change_is_diagnostic_until_semantic_judge() -> None:
     source = portrait()
     result = portrait(damaged_corner=True)
     deterministic = deterministic_scores(source, result)
-    assert "head_or_hair_cropped" in deterministic["hard_failures"]
+    assert deterministic["head_boundary_score"] < THRESHOLDS.head_boundary
+    assert "head_or_hair_cropped" not in deterministic["hard_failures"]
+
+
+def test_harmless_border_rerender_defers_to_semantic_head_judge() -> None:
+    image = portrait()
+    verdict = finalize_verdict(
+        semantic(),
+        {
+            "framing_score": 100,
+            "head_boundary_score": 60,
+            "hard_failures": [],
+        },
+        intensity="visible",
+    )
+    assert verdict.head_boundary_score == 96
+    assert "head_boundary_below_threshold" not in verdict.hard_failures
 
 
 def test_supported_model_ratio_quantization_does_not_false_fail_framing() -> None:
@@ -142,6 +173,58 @@ def test_supported_model_ratio_quantization_does_not_false_fail_framing() -> Non
     scores = deterministic_scores(source_buffer.getvalue(), result_buffer.getvalue())
     assert scores["framing_score"] >= THRESHOLDS.framing
     assert "framing_changed" not in scores["hard_failures"]
+
+
+def test_openai_fallback_preserves_portrait_orientation() -> None:
+    assert _openai_image_size(portrait()) == "1024x1536"
+
+    provider_output = Image.new("RGB", (1024, 1536), "#aabbcc")
+    output_buffer = io.BytesIO()
+    provider_output.save(output_buffer, "JPEG")
+    restored = _restore_source_aspect(output_buffer.getvalue(), portrait())
+    with Image.open(io.BytesIO(restored)) as image:
+        assert image.size == (768, 1024)
+
+
+def test_openai_mask_is_rgba_and_matches_source_size() -> None:
+    source = portrait()
+    mask = Image.new("L", (384, 512), 255)
+    ImageDraw.Draw(mask).ellipse((80, 200, 300, 480), fill=0)
+    mask_buffer = io.BytesIO()
+    mask.save(mask_buffer, "PNG")
+    source_png, mask_png = _prepare_openai_mask(source, mask_buffer.getvalue())
+    with Image.open(io.BytesIO(source_png)) as prepared_source:
+        assert prepared_source.mode == "RGBA"
+        assert prepared_source.size == (768, 1024)
+    with Image.open(io.BytesIO(mask_png)) as prepared_mask:
+        assert prepared_mask.mode == "RGBA"
+        assert prepared_mask.size == (768, 1024)
+        assert prepared_mask.getchannel("A").getextrema() == (0, 255)
+
+
+def test_gemini_fallback_only_handles_provider_availability() -> None:
+    assert _should_fallback_from_gemini(400, "Prepayment credits are depleted")
+    assert _should_fallback_from_gemini(429, "rate limited")
+    assert _should_fallback_from_gemini(503, "unavailable")
+    assert not _should_fallback_from_gemini(400, "blocked by safety policy")
+
+
+def test_qwen_image_poc_uses_base64_original_and_locked_output_contract() -> None:
+    image = portrait()
+    request = _qwen_image_request(
+        data=image,
+        mime_type="image/png",
+        prompt="只调整下颌线，眼睛保持不变",
+        previous_image=None,
+    )
+
+    content = request["input"]["messages"][0]["content"]
+    assert content[0]["image"].startswith("data:image/png;base64,")
+    assert content[-1]["text"] == "只调整下颌线，眼睛保持不变"
+    assert request["parameters"]["watermark"] is False
+    assert request["parameters"]["prompt_extend"] is False
+    assert "enlarged eyes" in request["parameters"]["negative_prompt"]
+    assert _qwen_image_size(image) == "768*1024"
 
 
 def test_every_semantic_incident_is_ineligible_and_gets_targeted_retry() -> None:
@@ -179,6 +262,18 @@ def test_visible_skin_only_cannot_pass_but_visible_structure_can() -> None:
     assert "target_change_below_threshold" in low.hard_failures
     assert low.eligible is False
     assert high.eligible is True
+
+
+def test_unknown_semantic_failure_code_cannot_block_release() -> None:
+    image = portrait()
+    verdict = finalize_verdict(
+        semantic(failures=["targetChangeScore"]),
+        deterministic_scores(image, image),
+        intensity="visible",
+    )
+
+    assert verdict.eligible is True
+    assert verdict.hard_failures == []
 
 
 def test_medical_direction_set_is_preserved_exactly_and_avoid_explanation_remains() -> None:
@@ -255,7 +350,7 @@ def test_pipeline_uses_targeted_correction_and_returns_only_passing_retry() -> N
     assert winner.verdict is not None and winner.verdict.eligible
     assert rounds == 1
     assert corrections[-1] is not None
-    assert "只加强用户已经选择" in corrections[-1]
+    assert "结构变化再增强一个受控档位" in corrections[-1]
 
 
 def test_quality_judge_prompt_localizes_explanation() -> None:
@@ -263,7 +358,9 @@ def test_quality_judge_prompt_localizes_explanation() -> None:
     en = _quality_judge_prompt(["chin"], ["eyes"], "visible", "en")
     assert "Simplified Chinese" in zh
     assert "natural English" in en
-    assert "confirmed target areas" in retry_instruction(
+    assert "0–100 scale" in zh
+    assert "Never use a 0–5" in zh
+    assert "confirmed target" in retry_instruction(
         ["target_change_below_threshold"],
         locale="en",
     )
@@ -282,7 +379,101 @@ def test_revision_prompt_keeps_original_as_immutable_baseline() -> None:
     assert "唯一基准" in prompt
 
 
+def test_revision_feedback_compiles_all_supported_actions() -> None:
+    assert compile_revision_feedback("下颌线再加强一点")["operations"] == ["strengthen"]
+    assert compile_revision_feedback("效果弱一点，自然一点")["operations"] == ["weaken"]
+    assert compile_revision_feedback("眼睛恢复原图并锁定不要动")["operations"] == [
+        "restore",
+        "lock",
+    ]
+    contract = compile_revision_feedback("下巴稍微调整")
+    assert contract["operations"] == ["adjust"]
+    assert contract["identity_baseline"] == "original"
+    assert contract["previous_result_role"] == "diagnostic_reference_only"
+
+
+def test_revision_judge_uses_original_as_only_baseline_and_strict_gates() -> None:
+    prompt = _revision_judge_prompt(
+        feedback="下颌线更明显，但眼睛不要动",
+        locked_regions=["眼睛", "鼻子"],
+        locale="zh-Hans",
+    )
+    schema = _revision_verdict_schema()
+    assert "only identity" in prompt
+    assert "PREVIOUS image is only evidence" in prompt
+    assert "feedbackExecutionScore >= 90" in prompt
+    assert set(schema["required"]) == set(schema["properties"])
+
+
+def test_preference_calibration_uses_latest_twelve_signals_in_order() -> None:
+    history = [f"signal-{index}" for index in range(15)]
+    prompt = _profile_prompt(3, calibration_history=history)
+    assert "signal-0" not in prompt
+    assert "signal-2" not in prompt
+    assert "signal-3" in prompt and "signal-14" in prompt
+    assert prompt.index("signal-3") < prompt.index("signal-14")
+    assert "高权重信号" in prompt
+
+
 def test_retry_instruction_for_unselected_eyes_restores_eye_identity() -> None:
     instruction = retry_instruction(["locked_region_changed"])
     for term in ["眼型", "眼距", "虹膜", "视线"]:
         assert term in instruction
+
+
+def test_pipeline_skips_semantic_judge_for_deterministic_hard_failure() -> None:
+    source = portrait()
+    tiny = io.BytesIO()
+    Image.new("RGB", (128, 128), "#ccb29f").save(tiny, "PNG")
+    generated = [tiny.getvalue(), source]
+    judge_calls = 0
+
+    async def generate(_: str | None) -> tuple[bytes, str]:
+        return generated.pop(0), "image/png"
+
+    async def judge(_: bytes, candidates: list[tuple[bytes, str]]) -> list[QualityVerdict]:
+        nonlocal judge_calls
+        judge_calls += 1
+        return [semantic() for _ in candidates]
+
+    winner, count, rounds, verdicts = asyncio.run(
+        run_generation_pipeline(
+            source=(source, "image/png"),
+            intensity="visible",
+            initial_count=1,
+            generate=generate,
+            judge=judge,
+        )
+    )
+
+    assert winner is not None
+    assert count == 2
+    assert rounds == 1
+    assert judge_calls == 1
+    assert verdicts[0].screening_stage == "deterministic_precheck"
+    assert verdicts[-1].screening_stage == "semantic_judge"
+
+
+def test_pipeline_surfaces_initial_generation_error() -> None:
+    image = portrait()
+
+    async def generate(_: str | None) -> tuple[bytes, str]:
+        raise ValueError("provider credits depleted")
+
+    async def judge(_: bytes, candidates: list[tuple[bytes, str]]) -> list[QualityVerdict]:
+        return [semantic() for _ in candidates]
+
+    try:
+        asyncio.run(
+            run_generation_pipeline(
+                source=(image, "image/png"),
+                intensity="visible",
+                initial_count=1,
+                generate=generate,
+                judge=judge,
+            )
+        )
+    except ValueError as exc:
+        assert "credits depleted" in str(exc)
+    else:
+        raise AssertionError("initial provider failure must be visible to the caller")

@@ -64,4 +64,31 @@ XMS_APP_ACCESS_TOKEN = your-temporary-test-token
 cd backend && python -m pytest -q
 ```
 
-详见 [算法评审说明](docs/algorithm-review.md) 与 [外部分享安全说明](docs/external-sharing-security.md)。
+真实模型验收使用仓库内的非隐私合成人像，输出包含逐张前后对比、质量分、失败码和耗时的 HTML 报告：
+
+```bash
+cd backend
+MODEL_MODE=live \
+IMAGE_PROVIDER=openai \
+OPENAI_ANALYSIS_MODEL=gpt-4.1-mini \
+OPENAI_JUDGE_MODEL=gpt-4.1 \
+OPENAI_IMAGE_MODEL=gpt-image-2 \
+GEMINI_IMAGE_MODEL=gemini-3.1-flash-image \
+python scripts/live_acceptance.py
+```
+
+V2/V3 三图验收：
+
+```bash
+cd backend
+MODEL_MODE=live IMAGE_PROVIDER=openai \
+OPENAI_ANALYSIS_MODEL=gpt-4.1 OPENAI_JUDGE_MODEL=gpt-4.1 \
+OPENAI_IMAGE_MODEL=gpt-image-2 \
+python scripts/revision_acceptance.py
+```
+
+API Key 只通过本机环境变量或被 Git 排除的 `backend/.env` 提供；验收报告写入同样被排除的 `backend/acceptance_runs/`。
+
+本轮实测结果见 [真实模型验收结果](docs/live-acceptance-result.md)。
+
+详见 [算法评审说明](docs/algorithm-review.md)、[iPhone App 端到端验收](docs/mobile-acceptance.md)、[国内网络与本地 PoC](docs/china-provider-poc.md)、[算法优化落地方案](docs/optimization-solution.md) 与 [外部分享安全说明](docs/external-sharing-security.md)。

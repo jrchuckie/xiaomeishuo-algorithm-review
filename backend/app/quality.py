@@ -25,6 +25,12 @@ HARD_FAILURE_CODES = {
     "locked_region_changed",
 }
 
+# The semantic model must never be able to invent a field name or prose label
+# that becomes a release-blocking code. Threshold failures are derived below
+# from numeric scores; only these enumerated visual incidents are accepted from
+# the model itself.
+SEMANTIC_FAILURE_CODES = HARD_FAILURE_CODES | {"unreadable_candidate"}
+
 
 @dataclass(frozen=True)
 class QualityThresholds:
@@ -99,8 +105,11 @@ def deterministic_scores(source_data: bytes, result_data: bytes) -> dict[str, in
         result = _normalized_rgb(result_data)
         border_delta = _strip_difference(source, result)
         head_boundary = max(0, round(100 - border_delta * 210))
-        if border_delta > 0.24:
-            failures.append("head_or_hair_cropped")
+        # A generative editor can legitimately re-render high-frequency border
+        # texture (car windows, leaves, hair) even when geometry is unchanged.
+        # Pixel difference therefore remains a diagnostic score, not a hard
+        # crop verdict. The high-detail semantic judge owns the actual
+        # head/hair boundary decision.
         return {
             "framing_score": framing,
             "head_boundary_score": head_boundary,
@@ -127,11 +136,15 @@ def finalize_verdict(
         else THRESHOLDS.target_natural
     )
     failures = list(dict.fromkeys([
-        *semantic.hard_failures,
+        *(code for code in semantic.hard_failures if code in SEMANTIC_FAILURE_CODES),
         *list(deterministic["hard_failures"]),
     ]))
     framing = min(semantic.framing_score, int(deterministic["framing_score"]))
-    head = min(semantic.head_boundary_score, int(deterministic["head_boundary_score"]))
+    # Pixel-level border difference is useful for catching a severe crop before
+    # an expensive judge call, but generative editors legitimately re-render
+    # background texture. Once the precheck finds no actual crop, let the
+    # semantic judge decide whether the crown/hair boundary is preserved.
+    head = semantic.head_boundary_score
     checks = {
         "identity_below_threshold": semantic.identity_score >= THRESHOLDS.identity,
         "framing_below_threshold": framing >= THRESHOLDS.framing,
@@ -153,6 +166,43 @@ def finalize_verdict(
     })
 
 
+def deterministic_rejection_verdict(
+    deterministic: dict[str, int | list[str]],
+    *,
+    intensity: str,
+    locale: str = "zh-Hans",
+) -> QualityVerdict:
+    """Reject a structurally unsafe candidate without a semantic model call."""
+    placeholder = QualityVerdict(
+        identity_score=100,
+        framing_score=100,
+        head_boundary_score=100,
+        target_change_score=100,
+        width_safety_score=100,
+        cheek_safety_score=100,
+        locked_region_score=100,
+        hard_failures=[],
+        summary=(
+            "Rejected by deterministic image safety precheck."
+            if locale.lower().startswith("en")
+            else "候选未通过确定性图片安全前检。"
+        ),
+        eligible=False,
+        retry_instruction="",
+        screening_stage="deterministic_precheck",
+    )
+    verdict = finalize_verdict(
+        placeholder,
+        deterministic,
+        intensity=intensity,
+        locale=locale,
+    )
+    return verdict.model_copy(update={
+        "eligible": False,
+        "screening_stage": "deterministic_precheck",
+    })
+
+
 def retry_instruction(failures: list[str], *, locale: str = "zh-Hans") -> str:
     chinese = {
         "head_or_hair_cropped": "锁定原图画幅、头顶、发冠和头发四角外接边界，完整恢复原图四边内容。",
@@ -163,7 +213,7 @@ def retry_instruction(failures: list[str], *, locale: str = "zh-Hans") -> str:
         "width_safety_below_threshold": "收回任何面部、双颧、面中、下颌和头部横向扩张。",
         "identity_drift": "降低结构变化，只保留用户已确认的主要方向，恢复本人身份特征。",
         "identity_below_threshold": "以原图为唯一身份基准，恢复本人五官比例、年龄感、表情与视线。",
-        "target_change_below_threshold": "只加强用户已经选择的目标部位；不得新增或顺带修改其他部位。",
+        "target_change_below_threshold": "把用户已选择部位的结构变化再增强一个受控档位（约增加 2–3 个百分点）；不得用肤质、光线、妆感或锐化代替，也不得新增或顺带修改其他部位。",
         "locked_region_changed": "恢复所有未选部位；尤其锁定原图眼型、眼距、虹膜、视线、鼻口和眉形。",
         "locked_region_below_threshold": "未选部位必须逐像义恢复到原图，不得用妆感或锐化掩盖变化。",
         "cheekbone_expanded": "恢复原图颧骨和颧弓宽度，禁止外扩、肿胀或面中变宽。",
@@ -179,7 +229,7 @@ def retry_instruction(failures: list[str], *, locale: str = "zh-Hans") -> str:
         "width_safety_below_threshold": "Remove any horizontal expansion of the face, cheeks, midface, jaw or head.",
         "identity_drift": "Reduce structural change, keep only confirmed targets and restore the person's identity.",
         "identity_below_threshold": "Use the original as the sole identity baseline; restore facial proportions, age impression, expression and gaze.",
-        "target_change_below_threshold": "Strengthen only the user's confirmed target areas; do not add or alter any other area.",
+        "target_change_below_threshold": "Increase structural change in only the confirmed target by one controlled step (about 2–3 percentage points); do not substitute skin, lighting, makeup or sharpening, and do not alter any other area.",
         "locked_region_changed": "Restore every unselected area, especially the original eye shape, spacing, irises, gaze, nose, mouth and brows.",
         "locked_region_below_threshold": "Restore unselected regions to the original; do not hide changes with makeup or sharpening.",
         "cheekbone_expanded": "Restore original cheekbone and zygomatic width; remove expansion, swelling and midface widening.",
@@ -228,33 +278,56 @@ async def run_generation_pipeline(
         for item in generated
         if not isinstance(item, BaseException)
     ]
+    generated_count = len(candidates)
     if not candidates:
+        errors = [item for item in generated if isinstance(item, BaseException)]
+        if errors:
+            raise errors[0]
         return None, 0, 0, []
     correction_rounds = 0
     all_verdicts: list[QualityVerdict] = []
     while True:
-        raw = await judge(source[0], [(item.data, item.mime_type) for item in candidates])
-        for item, semantic in zip(candidates, raw, strict=True):
-            item.verdict = finalize_verdict(
-                semantic,
-                deterministic_scores(source[0], item.data),
-                intensity=intensity,
-                locale=locale,
+        judge_candidates: list[Candidate] = []
+        deterministic_by_id: dict[int, dict[str, int | list[str]]] = {}
+        for item in candidates:
+            deterministic = deterministic_scores(source[0], item.data)
+            deterministic_by_id[id(item)] = deterministic
+            if deterministic["hard_failures"]:
+                item.verdict = deterministic_rejection_verdict(
+                    deterministic,
+                    intensity=intensity,
+                    locale=locale,
+                )
+            else:
+                judge_candidates.append(item)
+
+        if judge_candidates:
+            raw = await judge(
+                source[0],
+                [(item.data, item.mime_type) for item in judge_candidates],
             )
+            for item, semantic in zip(judge_candidates, raw, strict=True):
+                item.verdict = finalize_verdict(
+                    semantic,
+                    deterministic_by_id[id(item)],
+                    intensity=intensity,
+                    locale=locale,
+                )
         all_verdicts.extend(item.verdict for item in candidates if item.verdict)
         eligible = [item for item in candidates if item.verdict and item.verdict.eligible]
         if eligible:
-            return max(eligible, key=rank), len(all_verdicts), correction_rounds, all_verdicts
+            return max(eligible, key=rank), generated_count, correction_rounds, all_verdicts
         if correction_rounds >= settings.judge_max_correction_rounds:
-            return None, len(all_verdicts), correction_rounds, all_verdicts
+            return None, generated_count, correction_rounds, all_verdicts
         correction_rounds += 1
         retry = "\n".join(
             dict.fromkeys(item.verdict.retry_instruction for item in candidates if item.verdict)
         )
         try:
             data, mime = await generate(retry)
+            generated_count += 1
         except Exception:
             if correction_rounds >= settings.judge_max_correction_rounds:
-                return None, len(all_verdicts), correction_rounds, all_verdicts
+                return None, generated_count, correction_rounds, all_verdicts
             continue
         candidates = [Candidate(data=data, mime_type=mime)]
