@@ -153,6 +153,43 @@ def finalize_verdict(
     })
 
 
+def deterministic_rejection_verdict(
+    deterministic: dict[str, int | list[str]],
+    *,
+    intensity: str,
+    locale: str = "zh-Hans",
+) -> QualityVerdict:
+    """Reject a structurally unsafe candidate without a semantic model call."""
+    placeholder = QualityVerdict(
+        identity_score=100,
+        framing_score=100,
+        head_boundary_score=100,
+        target_change_score=100,
+        width_safety_score=100,
+        cheek_safety_score=100,
+        locked_region_score=100,
+        hard_failures=[],
+        summary=(
+            "Rejected by deterministic image safety precheck."
+            if locale.lower().startswith("en")
+            else "候选未通过确定性图片安全前检。"
+        ),
+        eligible=False,
+        retry_instruction="",
+        screening_stage="deterministic_precheck",
+    )
+    verdict = finalize_verdict(
+        placeholder,
+        deterministic,
+        intensity=intensity,
+        locale=locale,
+    )
+    return verdict.model_copy(update={
+        "eligible": False,
+        "screening_stage": "deterministic_precheck",
+    })
+
+
 def retry_instruction(failures: list[str], *, locale: str = "zh-Hans") -> str:
     chinese = {
         "head_or_hair_cropped": "锁定原图画幅、头顶、发冠和头发四角外接边界，完整恢复原图四边内容。",
@@ -228,33 +265,53 @@ async def run_generation_pipeline(
         for item in generated
         if not isinstance(item, BaseException)
     ]
+    generated_count = len(candidates)
     if not candidates:
         return None, 0, 0, []
     correction_rounds = 0
     all_verdicts: list[QualityVerdict] = []
     while True:
-        raw = await judge(source[0], [(item.data, item.mime_type) for item in candidates])
-        for item, semantic in zip(candidates, raw, strict=True):
-            item.verdict = finalize_verdict(
-                semantic,
-                deterministic_scores(source[0], item.data),
-                intensity=intensity,
-                locale=locale,
+        judge_candidates: list[Candidate] = []
+        deterministic_by_id: dict[int, dict[str, int | list[str]]] = {}
+        for item in candidates:
+            deterministic = deterministic_scores(source[0], item.data)
+            deterministic_by_id[id(item)] = deterministic
+            if deterministic["hard_failures"]:
+                item.verdict = deterministic_rejection_verdict(
+                    deterministic,
+                    intensity=intensity,
+                    locale=locale,
+                )
+            else:
+                judge_candidates.append(item)
+
+        if judge_candidates:
+            raw = await judge(
+                source[0],
+                [(item.data, item.mime_type) for item in judge_candidates],
             )
+            for item, semantic in zip(judge_candidates, raw, strict=True):
+                item.verdict = finalize_verdict(
+                    semantic,
+                    deterministic_by_id[id(item)],
+                    intensity=intensity,
+                    locale=locale,
+                )
         all_verdicts.extend(item.verdict for item in candidates if item.verdict)
         eligible = [item for item in candidates if item.verdict and item.verdict.eligible]
         if eligible:
-            return max(eligible, key=rank), len(all_verdicts), correction_rounds, all_verdicts
+            return max(eligible, key=rank), generated_count, correction_rounds, all_verdicts
         if correction_rounds >= settings.judge_max_correction_rounds:
-            return None, len(all_verdicts), correction_rounds, all_verdicts
+            return None, generated_count, correction_rounds, all_verdicts
         correction_rounds += 1
         retry = "\n".join(
             dict.fromkeys(item.verdict.retry_instruction for item in candidates if item.verdict)
         )
         try:
             data, mime = await generate(retry)
+            generated_count += 1
         except Exception:
             if correction_rounds >= settings.judge_max_correction_rounds:
-                return None, len(all_verdicts), correction_rounds, all_verdicts
+                return None, generated_count, correction_rounds, all_verdicts
             continue
         candidates = [Candidate(data=data, mime_type=mime)]

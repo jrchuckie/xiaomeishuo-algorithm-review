@@ -95,6 +95,25 @@ final class LocalEditVersion {
     var plan: EditPlanDTO? {
         try? JSONDecoder.api.decode(EditPlanDTO.self, from: planJSON)
     }
+
+    var calibrationSignal: String? {
+        let trimmedFeedback = userFeedback.trimmingCharacters(in: .whitespacesAndNewlines)
+        if liked == true, let plan {
+            let acceptedAreas = plan.changes
+                .filter(\.enabled)
+                .map(\.area)
+                .joined(separator: "、")
+            if !acceptedAreas.isEmpty {
+                return "满意并保存；认可的调整方向：\(acceptedAreas)"
+            }
+        }
+        if !trimmedFeedback.isEmpty {
+            return liked == false
+                ? "不满意并要求纠正：\(trimmedFeedback)"
+                : "用户校准反馈：\(trimmedFeedback)"
+        }
+        return nil
+    }
 }
 
 @Model

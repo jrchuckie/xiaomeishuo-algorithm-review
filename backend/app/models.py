@@ -77,6 +77,7 @@ class QualityVerdict(BaseModel):
     summary: str
     eligible: bool
     retry_instruction: str
+    screening_stage: Literal["deterministic_precheck", "semantic_judge"] = "semantic_judge"
 
 
 class GenerationResponse(BaseModel):
@@ -90,6 +91,8 @@ class GenerationResponse(BaseModel):
     quality_verdict: QualityVerdict | None = None
     candidate_count: int = 0
     correction_rounds: int = 0
+    semantic_judge_count: int = 0
+    deterministic_reject_count: int = 0
 
 
 class MedicalCandidate(BaseModel):

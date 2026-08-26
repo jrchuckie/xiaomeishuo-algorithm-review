@@ -453,11 +453,16 @@ class GeminiImageProvider(ImageProvider):
                     image_size=requested_image_size,
                 )
 
+        verdicts: list[QualityVerdict] = []
         try:
             winner, candidate_count, correction_rounds, verdicts = await run_generation_pipeline(
                 source=(data, mime_type),
                 intensity=plan.intensity,
-                initial_count=2 if plan.intensity == "visible" else 1,
+                initial_count=(
+                    settings.judge_initial_visible_candidates
+                    if plan.intensity == "visible"
+                    else 1
+                ),
                 generate=generate_candidate,
                 locale=locale,
                 judge=lambda original, candidates: _openai_quality_judge(
@@ -504,6 +509,12 @@ class GeminiImageProvider(ImageProvider):
                     quality_verdict=winner.verdict,
                     candidate_count=candidate_count,
                     correction_rounds=correction_rounds,
+                    semantic_judge_count=sum(
+                        item.screening_stage == "semantic_judge" for item in verdicts
+                    ),
+                    deterministic_reject_count=sum(
+                        item.screening_stage == "deterministic_precheck" for item in verdicts
+                    ),
                 )
             last_verdict = verdicts[-1] if verdicts else None
         except (httpx.HTTPError, ValueError, HTTPException) as exc:
@@ -543,6 +554,12 @@ class GeminiImageProvider(ImageProvider):
             quality_verdict=last_verdict,
             candidate_count=candidate_count,
             correction_rounds=correction_rounds,
+            semantic_judge_count=sum(
+                item.screening_stage == "semantic_judge" for item in verdicts
+            ),
+            deterministic_reject_count=sum(
+                item.screening_stage == "deterministic_precheck" for item in verdicts
+            ),
         )
 
     async def generate_medical(
@@ -578,11 +595,12 @@ class GeminiImageProvider(ImageProvider):
                     image_size=requested_image_size,
                 )
 
+        verdicts: list[QualityVerdict] = []
         try:
             winner, candidate_count, correction_rounds, verdicts = await run_generation_pipeline(
                 source=(data, mime_type),
                 intensity=intensity,
-                initial_count=2,
+                initial_count=settings.judge_initial_medical_candidates,
                 generate=generate_candidate,
                 locale=locale,
                 judge=lambda original, candidates: _openai_quality_judge(
@@ -616,6 +634,12 @@ class GeminiImageProvider(ImageProvider):
                     quality_verdict=winner.verdict,
                     candidate_count=candidate_count,
                     correction_rounds=correction_rounds,
+                    semantic_judge_count=sum(
+                        item.screening_stage == "semantic_judge" for item in verdicts
+                    ),
+                    deterministic_reject_count=sum(
+                        item.screening_stage == "deterministic_precheck" for item in verdicts
+                    ),
                 )
             last_verdict = verdicts[-1] if verdicts else None
         except (httpx.HTTPError, ValueError, HTTPException) as exc:
@@ -654,6 +678,12 @@ class GeminiImageProvider(ImageProvider):
             quality_verdict=last_verdict,
             candidate_count=candidate_count,
             correction_rounds=correction_rounds,
+            semantic_judge_count=sum(
+                item.screening_stage == "semantic_judge" for item in verdicts
+            ),
+            deterministic_reject_count=sum(
+                item.screening_stage == "deterministic_precheck" for item in verdicts
+            ),
         )
 
 

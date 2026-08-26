@@ -1,6 +1,7 @@
 from functools import lru_cache
 from typing import Literal
 
+from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -15,6 +16,8 @@ class Settings(BaseSettings):
     allowed_origins: str = "http://localhost:3000"
     app_access_token: str = ""
     judge_max_correction_rounds: int = 2
+    judge_initial_visible_candidates: int = Field(default=1, ge=1, le=4)
+    judge_initial_medical_candidates: int = Field(default=1, ge=1, le=4)
     judge_identity_min: int = 86
     judge_framing_min: int = 88
     judge_head_boundary_min: int = 90

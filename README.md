@@ -64,4 +64,4 @@ XMS_APP_ACCESS_TOKEN = your-temporary-test-token
 cd backend && python -m pytest -q
 ```
 
-详见 [算法评审说明](docs/algorithm-review.md) 与 [外部分享安全说明](docs/external-sharing-security.md)。
+详见 [算法评审说明](docs/algorithm-review.md)、[算法优化落地方案](docs/optimization-solution.md) 与 [外部分享安全说明](docs/external-sharing-security.md)。

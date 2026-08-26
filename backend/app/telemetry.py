@@ -31,6 +31,8 @@ def record_generation(
         "judge_model": settings.openai_analysis_model,
         "prompt_version": prompt_version,
         "candidate_count": response.candidate_count,
+        "semantic_judge_count": response.semantic_judge_count,
+        "deterministic_reject_count": response.deterministic_reject_count,
         "correction_rounds": response.correction_rounds,
         "elapsed_ms": round((perf_counter() - started) * 1000),
         "result_mode": response.result_mode,

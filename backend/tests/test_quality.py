@@ -286,3 +286,34 @@ def test_retry_instruction_for_unselected_eyes_restores_eye_identity() -> None:
     instruction = retry_instruction(["locked_region_changed"])
     for term in ["眼型", "眼距", "虹膜", "视线"]:
         assert term in instruction
+
+
+def test_pipeline_skips_semantic_judge_for_deterministic_hard_failure() -> None:
+    source = portrait()
+    generated = [portrait(damaged_top=True), source]
+    judge_calls = 0
+
+    async def generate(_: str | None) -> tuple[bytes, str]:
+        return generated.pop(0), "image/png"
+
+    async def judge(_: bytes, candidates: list[tuple[bytes, str]]) -> list[QualityVerdict]:
+        nonlocal judge_calls
+        judge_calls += 1
+        return [semantic() for _ in candidates]
+
+    winner, count, rounds, verdicts = asyncio.run(
+        run_generation_pipeline(
+            source=(source, "image/png"),
+            intensity="visible",
+            initial_count=1,
+            generate=generate,
+            judge=judge,
+        )
+    )
+
+    assert winner is not None
+    assert count == 2
+    assert rounds == 1
+    assert judge_calls == 1
+    assert verdicts[0].screening_stage == "deterministic_precheck"
+    assert verdicts[-1].screening_stage == "semantic_judge"
