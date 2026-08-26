@@ -8,10 +8,16 @@ from PIL import Image, ImageDraw
 
 from app.models import MedicalCandidate, MedicalPlanResponse, QualityVerdict
 from app.providers import (
+    _revision_judge_prompt,
+    _revision_verdict_schema,
+    compile_revision_feedback,
     _ensure_medical_direction_integrity,
     _gemini_edit_prompt,
     _openai_image_size,
     _prepare_openai_mask,
+    _profile_prompt,
+    _qwen_image_request,
+    _qwen_image_size,
     _quality_judge_prompt,
     _restore_source_aspect,
     _should_fallback_from_gemini,
@@ -203,6 +209,24 @@ def test_gemini_fallback_only_handles_provider_availability() -> None:
     assert not _should_fallback_from_gemini(400, "blocked by safety policy")
 
 
+def test_qwen_image_poc_uses_base64_original_and_locked_output_contract() -> None:
+    image = portrait()
+    request = _qwen_image_request(
+        data=image,
+        mime_type="image/png",
+        prompt="只调整下颌线，眼睛保持不变",
+        previous_image=None,
+    )
+
+    content = request["input"]["messages"][0]["content"]
+    assert content[0]["image"].startswith("data:image/png;base64,")
+    assert content[-1]["text"] == "只调整下颌线，眼睛保持不变"
+    assert request["parameters"]["watermark"] is False
+    assert request["parameters"]["prompt_extend"] is False
+    assert "enlarged eyes" in request["parameters"]["negative_prompt"]
+    assert _qwen_image_size(image) == "768*1024"
+
+
 def test_every_semantic_incident_is_ineligible_and_gets_targeted_retry() -> None:
     cases = {
         "face_or_head_widened": "双颧",
@@ -353,6 +377,42 @@ def test_revision_prompt_keeps_original_as_immutable_baseline() -> None:
     assert "上一版" in prompt
     assert "身份" in prompt
     assert "唯一基准" in prompt
+
+
+def test_revision_feedback_compiles_all_supported_actions() -> None:
+    assert compile_revision_feedback("下颌线再加强一点")["operations"] == ["strengthen"]
+    assert compile_revision_feedback("效果弱一点，自然一点")["operations"] == ["weaken"]
+    assert compile_revision_feedback("眼睛恢复原图并锁定不要动")["operations"] == [
+        "restore",
+        "lock",
+    ]
+    contract = compile_revision_feedback("下巴稍微调整")
+    assert contract["operations"] == ["adjust"]
+    assert contract["identity_baseline"] == "original"
+    assert contract["previous_result_role"] == "diagnostic_reference_only"
+
+
+def test_revision_judge_uses_original_as_only_baseline_and_strict_gates() -> None:
+    prompt = _revision_judge_prompt(
+        feedback="下颌线更明显，但眼睛不要动",
+        locked_regions=["眼睛", "鼻子"],
+        locale="zh-Hans",
+    )
+    schema = _revision_verdict_schema()
+    assert "only identity" in prompt
+    assert "PREVIOUS image is only evidence" in prompt
+    assert "feedbackExecutionScore >= 90" in prompt
+    assert set(schema["required"]) == set(schema["properties"])
+
+
+def test_preference_calibration_uses_latest_twelve_signals_in_order() -> None:
+    history = [f"signal-{index}" for index in range(15)]
+    prompt = _profile_prompt(3, calibration_history=history)
+    assert "signal-0" not in prompt
+    assert "signal-2" not in prompt
+    assert "signal-3" in prompt and "signal-14" in prompt
+    assert prompt.index("signal-3") < prompt.index("signal-14")
+    assert "高权重信号" in prompt
 
 
 def test_retry_instruction_for_unselected_eyes_restores_eye_identity() -> None:

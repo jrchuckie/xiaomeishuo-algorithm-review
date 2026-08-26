@@ -4,6 +4,7 @@ import base64
 import io
 import json
 from abc import ABC, abstractmethod
+from time import perf_counter
 from typing import Any, Callable
 from uuid import uuid4
 
@@ -22,11 +23,36 @@ from .models import (
     MedicalCandidate,
     MedicalPlanResponse,
     QualityVerdict,
+    RevisionVerdict,
 )
 from .quality import run_generation_pipeline
 
 ImageInput = tuple[bytes, str]
 settings = get_settings()
+
+
+def compile_revision_feedback(feedback: str | None) -> dict[str, Any]:
+    text = (feedback or "").strip()
+    normalized = text.lower()
+    operations: list[str] = []
+    keyword_groups = {
+        "strengthen": ("加强", "更明显", "再清楚", "再小", "再窄", "more", "stronger"),
+        "weaken": ("减弱", "弱一点", "自然一点", "不要这么", "less", "weaker", "subtle"),
+        "restore": ("恢复", "还原", "回到原图", "撤销", "restore", "revert", "original"),
+        "lock": ("不要动", "不动", "锁定", "保持不变", "keep", "lock", "unchanged"),
+    }
+    for operation, keywords in keyword_groups.items():
+        if any(keyword in normalized for keyword in keywords):
+            operations.append(operation)
+    if text and not operations:
+        operations.append("adjust")
+    return {
+        "raw_feedback": text,
+        "operations": operations,
+        "identity_baseline": "original",
+        "previous_result_role": "diagnostic_reference_only",
+        "unmentioned_regions": "locked_to_original",
+    }
 
 
 class AnalysisProvider(ABC):
@@ -444,6 +470,7 @@ class GeminiImageProvider(ImageProvider):
         feedback: str | None = None,
         locale: str = "zh-Hans",
     ) -> GenerationResponse:
+        pipeline_started = perf_counter()
         enabled_changes = [change for change in plan.changes if change.enabled]
         if not enabled_changes:
             raise HTTPException(status_code=400, detail="请至少选择一个修图方向。")
@@ -457,12 +484,14 @@ class GeminiImageProvider(ImageProvider):
             has_previous_result=previous_image is not None,
         )
         providers_used: set[str] = set()
+        stage_seconds = {"generation": 0.0, "quality_judge": 0.0}
 
         async def generate_candidate(correction: str | None) -> tuple[bytes, str]:
             attempt_prompt = prompt
             if correction:
                 attempt_prompt += "\nQUALITY JUDGE CORRECTION — obey precisely:\n" + correction
-            result = await _gemini_generate(
+            started = perf_counter()
+            result = await _generate_live_image(
                     data=data,
                     mime_type=mime_type,
                     prompt=attempt_prompt,
@@ -470,7 +499,24 @@ class GeminiImageProvider(ImageProvider):
                     image_size=requested_image_size,
                     provider_trace=providers_used,
                 )
+            stage_seconds["generation"] += perf_counter() - started
             return self._observe_candidate(result)
+
+        async def judge_candidates(
+            original: bytes,
+            candidates: list[tuple[bytes, str]],
+        ) -> list[QualityVerdict]:
+            started = perf_counter()
+            result = await _openai_quality_judge(
+                original,
+                candidates,
+                target_areas=[item.area for item in enabled_changes],
+                locked_regions=plan.locked_regions,
+                intensity=plan.intensity,
+                locale=locale,
+            )
+            stage_seconds["quality_judge"] += perf_counter() - started
+            return result
 
         verdicts: list[QualityVerdict] = []
         try:
@@ -484,14 +530,7 @@ class GeminiImageProvider(ImageProvider):
                 ),
                 generate=generate_candidate,
                 locale=locale,
-                judge=lambda original, candidates: _openai_quality_judge(
-                    original,
-                    candidates,
-                    target_areas=[item.area for item in enabled_changes],
-                    locked_regions=plan.locked_regions,
-                    intensity=plan.intensity,
-                    locale=locale,
-                ),
+                judge=judge_candidates,
             )
             if winner and winner.verdict:
                 result_dimensions = _image_dimensions(winner.data)
@@ -534,6 +573,7 @@ class GeminiImageProvider(ImageProvider):
                     deterministic_reject_count=sum(
                         item.screening_stage == "deterministic_precheck" for item in verdicts
                     ),
+                    stage_timings_ms=_stage_timings(stage_seconds, pipeline_started),
                     generation_provider=_generation_provider(providers_used),
                 )
             last_verdict = verdicts[-1] if verdicts else None
@@ -580,6 +620,7 @@ class GeminiImageProvider(ImageProvider):
             deterministic_reject_count=sum(
                 item.screening_stage == "deterministic_precheck" for item in verdicts
             ),
+            stage_timings_ms=_stage_timings(stage_seconds, pipeline_started),
             generation_provider=_generation_provider(providers_used),
         )
 
@@ -592,6 +633,7 @@ class GeminiImageProvider(ImageProvider):
         feedback: str | None = None,
         locale: str = "zh-Hans",
     ) -> GenerationResponse:
+        pipeline_started = perf_counter()
         enabled = [item for item in plan.candidates if item.enabled and item.priority != "avoid"]
         if not enabled:
             raise HTTPException(status_code=400, detail="请至少确认一个目标方向。")
@@ -605,12 +647,14 @@ class GeminiImageProvider(ImageProvider):
             has_previous_result=previous_image is not None,
         )
         providers_used: set[str] = set()
+        stage_seconds = {"generation": 0.0, "quality_judge": 0.0}
 
         async def generate_candidate(correction: str | None) -> tuple[bytes, str]:
             attempt_prompt = prompt
             if correction:
                 attempt_prompt += "\nQUALITY JUDGE CORRECTION — obey precisely:\n" + correction
-            result = await _gemini_generate(
+            started = perf_counter()
+            result = await _generate_live_image(
                     data=data,
                     mime_type=mime_type,
                     prompt=attempt_prompt,
@@ -618,7 +662,24 @@ class GeminiImageProvider(ImageProvider):
                     image_size=requested_image_size,
                     provider_trace=providers_used,
                 )
+            stage_seconds["generation"] += perf_counter() - started
             return self._observe_candidate(result)
+
+        async def judge_candidates(
+            original: bytes,
+            candidates: list[tuple[bytes, str]],
+        ) -> list[QualityVerdict]:
+            started = perf_counter()
+            result = await _openai_quality_judge(
+                original,
+                candidates,
+                target_areas=[item.area for item in enabled],
+                locked_regions=plan.locked_regions,
+                intensity=intensity,
+                locale=locale,
+            )
+            stage_seconds["quality_judge"] += perf_counter() - started
+            return result
 
         verdicts: list[QualityVerdict] = []
         try:
@@ -628,14 +689,7 @@ class GeminiImageProvider(ImageProvider):
                 initial_count=settings.judge_initial_medical_candidates,
                 generate=generate_candidate,
                 locale=locale,
-                judge=lambda original, candidates: _openai_quality_judge(
-                    original,
-                    candidates,
-                    target_areas=[item.area for item in enabled],
-                    locked_regions=plan.locked_regions,
-                    intensity=intensity,
-                    locale=locale,
-                ),
+                judge=judge_candidates,
             )
             if winner and winner.verdict:
                 return GenerationResponse(
@@ -665,6 +719,7 @@ class GeminiImageProvider(ImageProvider):
                     deterministic_reject_count=sum(
                         item.screening_stage == "deterministic_precheck" for item in verdicts
                     ),
+                    stage_timings_ms=_stage_timings(stage_seconds, pipeline_started),
                     generation_provider=_generation_provider(providers_used),
                 )
             last_verdict = verdicts[-1] if verdicts else None
@@ -710,16 +765,69 @@ class GeminiImageProvider(ImageProvider):
             deterministic_reject_count=sum(
                 item.screening_stage == "deterministic_precheck" for item in verdicts
             ),
+            stage_timings_ms=_stage_timings(stage_seconds, pipeline_started),
             generation_provider=_generation_provider(providers_used),
         )
 
 
+def _stage_timings(stage_seconds: dict[str, float], started: float) -> dict[str, int]:
+    total = perf_counter() - started
+    measured = sum(stage_seconds.values())
+    return {
+        "generation": round(stage_seconds["generation"] * 1000),
+        "quality_judge": round(stage_seconds["quality_judge"] * 1000),
+        "preprocess_and_routing": round(max(0.0, total - measured) * 1000),
+        "pipeline_total": round(total * 1000),
+    }
+
+
 def _generation_provider(providers_used: set[str]) -> str:
+    if "qwen" in providers_used:
+        return "qwen"
     if "openai" in providers_used:
         return "openai"
     if "gemini" in providers_used:
         return "gemini"
     return "unknown"
+
+
+async def _generate_live_image(
+    *,
+    data: bytes,
+    mime_type: str,
+    prompt: str,
+    previous_image: ImageInput | None = None,
+    image_size: str = "2K",
+    provider_trace: set[str] | None = None,
+) -> tuple[bytes, str]:
+    if settings.image_provider == "openai":
+        result = await _openai_image_edit(
+            data=data,
+            mime_type=mime_type,
+            prompt=prompt,
+            previous_image=previous_image,
+        )
+        if provider_trace is not None:
+            provider_trace.add("openai")
+        return result
+    if settings.image_provider == "qwen":
+        result = await _qwen_image_edit(
+            data=data,
+            mime_type=mime_type,
+            prompt=prompt,
+            previous_image=previous_image,
+        )
+        if provider_trace is not None:
+            provider_trace.add("qwen")
+        return result
+    return await _gemini_generate(
+        data=data,
+        mime_type=mime_type,
+        prompt=prompt,
+        previous_image=previous_image,
+        image_size=image_size,
+        provider_trace=provider_trace,
+    )
 
 
 async def _openai_json_response(
@@ -820,6 +928,136 @@ async def _openai_quality_judge(
     if len(verdicts) != len(candidates):
         raise ValueError("裁判结果数量与候选数量不一致")
     return verdicts
+
+
+async def _openai_revision_judge(
+    original: ImageInput,
+    previous: ImageInput,
+    revision: ImageInput,
+    *,
+    feedback: str,
+    locked_regions: list[str],
+    locale: str = "zh-Hans",
+) -> RevisionVerdict:
+    content: list[dict[str, Any]] = [
+        {
+            "type": "input_text",
+            "text": _revision_judge_prompt(
+                feedback=feedback,
+                locked_regions=locked_regions,
+                locale=locale,
+            ),
+        }
+    ]
+    for label, image in (
+        ("ORIGINAL_IDENTITY_BASELINE", original),
+        ("PREVIOUS_PROBLEM_REFERENCE", previous),
+        ("NEW_REVISION_TO_JUDGE", revision),
+    ):
+        optimized, optimized_mime = _optimize_image(
+            *image,
+            max_dimension=768,
+            quality=78,
+        )
+        content.extend(
+            [
+                {"type": "input_text", "text": label},
+                {
+                    "type": "input_image",
+                    "image_url": _data_url(optimized, optimized_mime),
+                    "detail": "high",
+                },
+            ]
+        )
+    payload = await _openai_json_response(
+        content=content,
+        schema_name="revision_quality_verdict",
+        schema=_revision_verdict_schema(),
+        model=settings.openai_judge_model or settings.openai_analysis_model,
+    )
+    verdict = RevisionVerdict.model_validate(payload)
+    expected_eligible = bool(
+        verdict.feedback_execution_score >= 90
+        and verdict.identity_score >= 86
+        and verdict.locked_region_score >= 90
+        and verdict.original_baseline_score >= 90
+        and not verdict.hard_failures
+    )
+    # Do not trust a model-authored boolean when it disagrees with product gates.
+    return verdict.model_copy(update={"eligible": expected_eligible})
+
+
+def _revision_judge_prompt(
+    *,
+    feedback: str,
+    locked_regions: list[str],
+    locale: str,
+) -> str:
+    contract = compile_revision_feedback(feedback)
+    output_language = (
+        "Write the summary in concise natural English."
+        if locale.lower().startswith("en")
+        else "请用简洁的简体中文写 summary。"
+    )
+    return f"""
+You are a strict V2/V3 portrait revision judge. Compare all three images.
+The ORIGINAL is the only identity, composition and unmentioned-region baseline.
+The PREVIOUS image is only evidence of the problem the user wants corrected.
+Judge whether NEW_REVISION executes the compiled feedback without accumulating drift.
+
+Compiled feedback contract: {json.dumps(contract, ensure_ascii=False)}
+Locked regions: {json.dumps(locked_regions, ensure_ascii=False)}
+
+Hard failures use only: feedback_not_followed, cumulative_identity_drift,
+locked_region_changed, original_baseline_lost, change_overdone.
+
+Use integer scores from 0 to 100. feedbackExecutionScore must be at least 90 only
+when the requested strengthen/weaken/restore/lock action is visibly and correctly
+executed. originalBaselineScore must be at least 90 only when identity, composition
+and all unmentioned regions remain anchored to ORIGINAL rather than drifting from
+PREVIOUS. A hard failure can never be offset by another high score.
+Set eligible true only when feedbackExecutionScore >= 90, identityScore >= 86,
+lockedRegionScore >= 90, originalBaselineScore >= 90 and hardFailures is empty.
+{output_language}
+""".strip()
+
+
+def _revision_verdict_schema() -> dict[str, Any]:
+    score = {"type": "integer", "minimum": 0, "maximum": 100}
+    return {
+        "type": "object",
+        "additionalProperties": False,
+        "required": [
+            "feedback_execution_score",
+            "identity_score",
+            "locked_region_score",
+            "original_baseline_score",
+            "hard_failures",
+            "summary",
+            "eligible",
+        ],
+        "properties": {
+            "feedback_execution_score": score,
+            "identity_score": score,
+            "locked_region_score": score,
+            "original_baseline_score": score,
+            "hard_failures": {
+                "type": "array",
+                "items": {
+                    "type": "string",
+                    "enum": [
+                        "feedback_not_followed",
+                        "cumulative_identity_drift",
+                        "locked_region_changed",
+                        "original_baseline_lost",
+                        "change_overdone",
+                    ],
+                },
+            },
+            "summary": {"type": "string"},
+            "eligible": {"type": "boolean"},
+        },
+    }
 
 
 def _quality_judge_prompt(
@@ -1118,6 +1356,99 @@ composition remain immutable.
     return _restore_source_aspect(generated, data), "image/jpeg"
 
 
+def _qwen_image_size(data: bytes) -> str:
+    dimensions = _image_dimensions(data)
+    if not dimensions:
+        return "1024*1024"
+    width, height = dimensions
+    scale = min(1.0, 2048 / max(width, height))
+    width = max(512, round(width * scale / 16) * 16)
+    height = max(512, round(height * scale / 16) * 16)
+    if width * height > 2048 * 2048:
+        scale = (2048 * 2048 / (width * height)) ** 0.5
+        width = max(512, round(width * scale / 16) * 16)
+        height = max(512, round(height * scale / 16) * 16)
+    return f"{width}*{height}"
+
+
+def _qwen_image_request(
+    *,
+    data: bytes,
+    mime_type: str,
+    prompt: str,
+    previous_image: ImageInput | None,
+) -> dict[str, Any]:
+    content: list[dict[str, str]] = [{"image": _data_url(data, mime_type)}]
+    if previous_image is not None:
+        previous_data, previous_mime = _optimize_image(
+            *previous_image,
+            max_dimension=2048,
+            quality=92,
+        )
+        content.append({"image": _data_url(previous_data, previous_mime)})
+    content.append({"text": prompt})
+    return {
+        "model": settings.qwen_image_model,
+        "input": {"messages": [{"role": "user", "content": content}]},
+        "parameters": {
+            "n": 1,
+            "negative_prompt": (
+                "identity drift, enlarged eyes, widened face, expanded cheekbones, "
+                "cropped hair, changed background, collage, text, watermark, low quality"
+            ),
+            "prompt_extend": False,
+            "watermark": False,
+            "size": _qwen_image_size(data),
+        },
+    }
+
+
+async def _qwen_image_edit(
+    *,
+    data: bytes,
+    mime_type: str,
+    prompt: str,
+    previous_image: ImageInput | None = None,
+) -> tuple[bytes, str]:
+    payload = _qwen_image_request(
+        data=data,
+        mime_type=mime_type,
+        prompt=prompt,
+        previous_image=previous_image,
+    )
+    async with httpx.AsyncClient(timeout=300) as client:
+        response = await client.post(
+            settings.qwen_image_endpoint,
+            headers={
+                "Authorization": f"Bearer {settings.qwen_api_key}",
+                "Content-Type": "application/json",
+            },
+            json=payload,
+        )
+        if not response.is_success:
+            try:
+                message = response.json().get("message", "Qwen 图片编辑请求失败")
+            except ValueError:
+                message = "Qwen 图片编辑请求失败"
+            raise ValueError(str(message)[:240])
+        choices = response.json().get("output", {}).get("choices", [])
+        image_url = None
+        if choices:
+            for item in choices[0].get("message", {}).get("content", []):
+                if item.get("image"):
+                    image_url = item["image"]
+                    break
+        if not image_url:
+            raise ValueError("Qwen 图片编辑没有返回图片")
+        parsed = httpx.URL(image_url)
+        host = parsed.host.decode() if isinstance(parsed.host, bytes) else parsed.host
+        if parsed.scheme != "https" or not host or not host.endswith(".aliyuncs.com"):
+            raise ValueError("Qwen 返回了不受信任的图片地址")
+        image_response = await client.get(image_url)
+        image_response.raise_for_status()
+    return _restore_source_aspect(image_response.content, data), "image/jpeg"
+
+
 def _prepare_openai_mask(source_data: bytes, mask_data: bytes) -> tuple[bytes, bytes]:
     with Image.open(io.BytesIO(source_data)) as source_original:
         source = ImageOps.exif_transpose(source_original).convert("RGBA")
@@ -1353,9 +1684,11 @@ def _gemini_medical_prompt(
     locked = "、".join(plan.locked_regions)
     revision = ""
     if feedback and feedback.strip():
+        contract = compile_revision_feedback(feedback)
         revision = (
             "\nRevision feedback from the user:\n"
-            f"{feedback.strip()}\nOnly correct that feedback. The original photo remains the identity and locked-region reference."
+            f"{json.dumps(contract, ensure_ascii=False)}\n"
+            "Execute only this compiled contract. The original photo remains the identity and locked-region reference."
         )
     elif has_previous_result:
         revision = "\nThis is a revision. Use the original photo as the identity and locked-region source of truth."
@@ -1400,10 +1733,11 @@ def _gemini_edit_prompt(
     locked = "、".join(locked_regions)
     revision = ""
     if feedback and feedback.strip():
+        contract = compile_revision_feedback(feedback)
         revision = f"""
 
-用户对上一版的具体反馈：
-{feedback.strip()}
+用户对上一版反馈的结构化执行合同：
+{json.dumps(contract, ensure_ascii=False, indent=2)}
 
 这是一次迭代修图。请以原始照片为身份、构图和未选区域的唯一基准，结合上一版观察问题；
 只修正用户指出的不满意之处，不要在上一版基础上继续累积无关变化。

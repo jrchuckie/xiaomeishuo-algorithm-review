@@ -35,6 +35,7 @@ def record_generation(
         "deterministic_reject_count": response.deterministic_reject_count,
         "correction_rounds": response.correction_rounds,
         "elapsed_ms": round((perf_counter() - started) * 1000),
+        "stage_timings_ms": response.stage_timings_ms,
         "result_mode": response.result_mode,
         "generation_provider": response.generation_provider,
         "scores": (

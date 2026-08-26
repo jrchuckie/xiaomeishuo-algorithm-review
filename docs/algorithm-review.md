@@ -29,7 +29,7 @@
 | framingScore | 88 |
 | headBoundaryScore | 90 |
 | targetChangeScore（自然） | 48 |
-| targetChangeScore（明显/医美） | 68 |
+| targetChangeScore（明显/医美） | 65 |
 | widthSafetyScore | 88 |
 | cheekSafetyScore | 88 |
 | lockedRegionScore | 90 |
@@ -47,4 +47,4 @@
 
 ## 测试
 
-`backend/tests/golden/manifest.json` 定义了不包含真人素材的 14 类事故场景。确定性测试覆盖评分、门槛、候选选择、纠偏指令、集合完整性与安全回退；真实模型调用应使用评审者自备的非隐私测试素材与 Key。
+`backend/tests/golden/manifest.json` 定义了不包含真人素材的 14 类事故场景。确定性测试覆盖评分、门槛、候选选择、纠偏指令、集合完整性与安全回退；真实模型验收使用仓库内的 3 张虚构合成人像，并增加 3 组 V2/V3 三图裁判。

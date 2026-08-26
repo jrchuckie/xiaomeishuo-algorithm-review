@@ -1,0 +1,122 @@
+{
+  "generated_at": "2026-08-26T06:36:26.914857+00:00",
+  "evaluation": {
+    "passed": true,
+    "gates": {
+      "v2_v3_feedback_correct_rate": true,
+      "deliverable_within_two_corrections_rate": true,
+      "original_fallback_rate": true
+    },
+    "metrics": {
+      "case_count": 3,
+      "passed_count": 3,
+      "v2_v3_feedback_correct_rate": 1.0,
+      "deliverable_within_two_corrections_rate": 1.0,
+      "original_fallback_rate": 0.0
+    }
+  },
+  "cases": [
+    {
+      "id": "night-v2-strengthen-lock-eyes",
+      "accepted": true,
+      "feedback": "下颌线比上一版再清楚一个小档位，但眼睛、鼻子、嘴唇、颧骨、头发和构图完全不要动，仍然必须是本人。",
+      "elapsed_seconds": 53.08,
+      "result": "night-v2-strengthen-lock-eyes-result.jpg",
+      "result_mode": "gemini_edit",
+      "generation_provider": "openai",
+      "candidate_count": 1,
+      "correction_rounds": 0,
+      "generation_quality": {
+        "identity_score": 95,
+        "framing_score": 97,
+        "head_boundary_score": 97,
+        "target_change_score": 67,
+        "width_safety_score": 97,
+        "cheek_safety_score": 97,
+        "locked_region_score": 98,
+        "hard_failures": [],
+        "summary": "头脸比例与下颌线有细微优化，改动克制且自然。身份、五官、表情、发型等锁定区无变化，未出现扩张、削弱或构图失误。整体合规，目标编辑有轻微可见度。",
+        "eligible": true,
+        "retry_instruction": "降低变化幅度并严格恢复原图身份、画幅和未选区域。",
+        "screening_stage": "semantic_judge"
+      },
+      "revision_verdict": {
+        "feedback_execution_score": 92,
+        "identity_score": 96,
+        "locked_region_score": 97,
+        "original_baseline_score": 95,
+        "hard_failures": [],
+        "summary": "下颌线强化幅度适中，未出现过度变化，且脸部五官、发型以及构图等锁定区域完全保持原貌，身份无偏移，达成反馈要求。",
+        "eligible": true
+      }
+    },
+    {
+      "id": "car-v2-strengthen-lock-features",
+      "accepted": true,
+      "feedback": "下巴与下颌交界再清楚一点，幅度保持自然；眼睛、鼻子、嘴、表情、颧骨和上半脸恢复并锁定到原图。",
+      "elapsed_seconds": 43.34,
+      "result": "car-v2-strengthen-lock-features-result.jpg",
+      "result_mode": "gemini_edit",
+      "generation_provider": "openai",
+      "candidate_count": 1,
+      "correction_rounds": 0,
+      "generation_quality": {
+        "identity_score": 97,
+        "framing_score": 99,
+        "head_boundary_score": 98,
+        "target_change_score": 68,
+        "width_safety_score": 99,
+        "cheek_safety_score": 98,
+        "locked_region_score": 98,
+        "hard_failures": [],
+        "summary": "下巴和下颌线有明显但克制的变化，改善较为自然，未影响身份和主要锁定区域。人像结构、面部内容和属性无明显漂移。没有出现裁切、拉伸或构图异常。符合可见强度的要求，但变化幅度偏温和。",
+        "eligible": true,
+        "retry_instruction": "降低变化幅度并严格恢复原图身份、画幅和未选区域。",
+        "screening_stage": "semantic_judge"
+      },
+      "revision_verdict": {
+        "feedback_execution_score": 95,
+        "identity_score": 95,
+        "locked_region_score": 95,
+        "original_baseline_score": 95,
+        "hard_failures": [],
+        "summary": "新修版下巴与下颌交界处更加清晰，且幅度自然。眼睛、鼻子、嘴、表情、颧骨和上半脸已恢复并锁定到原图，未出现身份漂移及其他区域变动，反馈已有效执行。",
+        "eligible": true
+      }
+    },
+    {
+      "id": "side-v2-visible-side-only",
+      "accepted": true,
+      "feedback": "只加强可见侧嘴角以下的下颌缘，其他地方不要动，尤其保持原图的侧转角度、眼型、鼻口、发型和不对称。",
+      "elapsed_seconds": 56.33,
+      "result": "side-v2-visible-side-only-result.jpg",
+      "result_mode": "gemini_edit",
+      "generation_provider": "openai",
+      "candidate_count": 1,
+      "correction_rounds": 0,
+      "generation_quality": {
+        "identity_score": 95,
+        "framing_score": 98,
+        "head_boundary_score": 97,
+        "target_change_score": 75,
+        "width_safety_score": 97,
+        "cheek_safety_score": 97,
+        "locked_region_score": 96,
+        "hard_failures": [],
+        "summary": "下颌缘与下巴比例有明显优化，变化自然，未超出身份辨识度。构图和头部边界基本一致，未出现变宽、颧骨扩张或中面部扩大等问题。仅有极细微的皮肤质感差异，不影响整体达标。",
+        "eligible": true,
+        "retry_instruction": "降低变化幅度并严格恢复原图身份、画幅和未选区域。",
+        "screening_stage": "semantic_judge"
+      },
+      "revision_verdict": {
+        "feedback_execution_score": 92,
+        "identity_score": 90,
+        "locked_region_score": 95,
+        "original_baseline_score": 92,
+        "hard_failures": [],
+        "summary": "新版本明显仅加强了可见侧嘴角以下的下颌缘，其他部位如角度、眼型、鼻口、发型和不对称等都忠于原图，未出现多余改动或身份漂移。锁定区域完好，整体符合反馈要求。",
+        "eligible": true
+      }
+    }
+  ]
+}

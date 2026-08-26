@@ -46,11 +46,31 @@ struct EditResultView: View {
                         .foregroundStyle(AppTheme.muted)
                         .card()
 
+                    if result.resultMode == "safe_original" {
+                        Label(
+                            "本轮未产生可安全交付的新版本，当前画面是原图。你可以修改要求后重试。",
+                            systemImage: "shield.checkered"
+                        )
+                        .font(.footnote.weight(.semibold))
+                        .foregroundStyle(AppTheme.wine)
+                        .card()
+                    }
+
                     VStack(alignment: .leading, spacing: 10) {
                         Text("本轮质检").font(.headline)
                         ForEach(result.qualityNotes, id: \.self) { note in
-                            Label(note, systemImage: "checkmark.circle.fill")
+                            Label(
+                                note,
+                                systemImage: result.resultMode == "safe_original"
+                                    ? "shield.fill"
+                                    : "checkmark.circle.fill"
+                            )
                                 .foregroundStyle(AppTheme.wine)
+                        }
+                        if let provider = result.generationProvider {
+                            Text("生成引擎：\(provider) · 候选 \(result.candidateCount ?? 0) · 纠偏 \(result.correctionRounds ?? 0) 轮")
+                                .font(.caption)
+                                .foregroundStyle(AppTheme.muted)
                         }
                     }
                     .card()
@@ -94,7 +114,7 @@ struct EditResultView: View {
                         Label("满意，保存到相册", systemImage: "square.and.arrow.down.fill")
                     }
                     .buttonStyle(PrimaryButtonStyle())
-                    .disabled(resultImage == nil || isWorking)
+                    .disabled(resultImage == nil || isWorking || result.resultMode == "safe_original")
 
                     if let statusMessage {
                         Text(statusMessage)

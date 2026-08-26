@@ -15,6 +15,10 @@ class Settings(BaseSettings):
     openai_image_quality: Literal["low", "medium", "high", "auto"] = "medium"
     gemini_api_key: str = ""
     gemini_image_model: str = ""
+    image_provider: Literal["gemini", "openai", "qwen"] = "gemini"
+    qwen_api_key: str = ""
+    qwen_image_endpoint: str = ""
+    qwen_image_model: str = "qwen-image-edit-plus"
     max_upload_mb: int = 15
     allowed_origins: str = "http://localhost:3000"
     app_access_token: str = ""

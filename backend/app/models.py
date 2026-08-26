@@ -80,6 +80,24 @@ class QualityVerdict(BaseModel):
     screening_stage: Literal["deterministic_precheck", "semantic_judge"] = "semantic_judge"
 
 
+class RevisionVerdict(BaseModel):
+    feedback_execution_score: int = Field(ge=0, le=100)
+    identity_score: int = Field(ge=0, le=100)
+    locked_region_score: int = Field(ge=0, le=100)
+    original_baseline_score: int = Field(ge=0, le=100)
+    hard_failures: list[
+        Literal[
+            "feedback_not_followed",
+            "cumulative_identity_drift",
+            "locked_region_changed",
+            "original_baseline_lost",
+            "change_overdone",
+        ]
+    ] = Field(default_factory=list)
+    summary: str
+    eligible: bool
+
+
 class GenerationResponse(BaseModel):
     id: str
     status: Literal["completed"]
@@ -93,7 +111,8 @@ class GenerationResponse(BaseModel):
     correction_rounds: int = 0
     semantic_judge_count: int = 0
     deterministic_reject_count: int = 0
-    generation_provider: Literal["mock", "gemini", "openai", "unknown"] = "unknown"
+    stage_timings_ms: dict[str, int] = Field(default_factory=dict)
+    generation_provider: Literal["mock", "gemini", "openai", "qwen", "unknown"] = "unknown"
 
 
 class MedicalCandidate(BaseModel):

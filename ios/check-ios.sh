@@ -5,6 +5,7 @@ cd "$(dirname "$0")"
 xcodegen generate --spec project.yml >/dev/null
 
 sdk_path="$(xcrun --sdk iphoneos --show-sdk-path)"
+swift_files=()
 while IFS= read -r -d '' swift_file; do
   swift_files+=("$swift_file")
 done < <(find Xiaomeishuo -name '*.swift' -print0)
@@ -19,4 +20,3 @@ xcrun swiftc \
   "${swift_files[@]}"
 
 echo "iOS 源码类型检查通过。"
-
