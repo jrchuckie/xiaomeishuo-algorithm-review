@@ -36,6 +36,7 @@ def record_generation(
         "correction_rounds": response.correction_rounds,
         "elapsed_ms": round((perf_counter() - started) * 1000),
         "result_mode": response.result_mode,
+        "generation_provider": response.generation_provider,
         "scores": (
             {
                 "identity": verdict.identity_score,

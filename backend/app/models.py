@@ -93,6 +93,7 @@ class GenerationResponse(BaseModel):
     correction_rounds: int = 0
     semantic_judge_count: int = 0
     deterministic_reject_count: int = 0
+    generation_provider: Literal["mock", "gemini", "openai", "unknown"] = "unknown"
 
 
 class MedicalCandidate(BaseModel):

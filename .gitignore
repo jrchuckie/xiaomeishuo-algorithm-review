@@ -29,3 +29,4 @@ xcuserdata/
 *.log
 *.zip
 tmp/
+backend/acceptance_runs/

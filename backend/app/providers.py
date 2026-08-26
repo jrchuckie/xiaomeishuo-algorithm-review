@@ -4,7 +4,7 @@ import base64
 import io
 import json
 from abc import ABC, abstractmethod
-from typing import Any
+from typing import Any, Callable
 from uuid import uuid4
 
 import httpx
@@ -244,6 +244,7 @@ class MockImageProvider(ImageProvider):
             result_mode="mock_original",
             message="当前为 Mock 模式：结果页沿用原图，用于验证完整交互。",
             quality_notes=["本人身份锁定", "未选部位锁定", "真实模型可随时启用"],
+            generation_provider="mock",
         )
 
     async def generate_medical(
@@ -261,6 +262,7 @@ class MockImageProvider(ImageProvider):
             result_mode="mock_original",
             message="当前为 Mock 模式：沿用原图验证医美决策全流程。",
             quality_notes=["本人身份锁定", "未选部位锁定", "效果仅表达审美目标"],
+            generation_provider="mock",
         )
 
 
@@ -421,6 +423,19 @@ class OpenAIAnalysisProvider(AnalysisProvider):
 
 
 class GeminiImageProvider(ImageProvider):
+    def __init__(
+        self,
+        candidate_observer: Callable[[bytes, str, int], None] | None = None,
+    ) -> None:
+        self._candidate_observer = candidate_observer
+        self._candidate_index = 0
+
+    def _observe_candidate(self, result: tuple[bytes, str]) -> tuple[bytes, str]:
+        self._candidate_index += 1
+        if self._candidate_observer is not None:
+            self._candidate_observer(result[0], result[1], self._candidate_index)
+        return result
+
     async def generate(
         self,
         source: ImageInput,
@@ -441,17 +456,21 @@ class GeminiImageProvider(ImageProvider):
             feedback=feedback,
             has_previous_result=previous_image is not None,
         )
+        providers_used: set[str] = set()
+
         async def generate_candidate(correction: str | None) -> tuple[bytes, str]:
             attempt_prompt = prompt
             if correction:
                 attempt_prompt += "\nQUALITY JUDGE CORRECTION — obey precisely:\n" + correction
-            return await _gemini_generate(
+            result = await _gemini_generate(
                     data=data,
                     mime_type=mime_type,
                     prompt=attempt_prompt,
                     previous_image=previous_image,
                     image_size=requested_image_size,
+                    provider_trace=providers_used,
                 )
+            return self._observe_candidate(result)
 
         verdicts: list[QualityVerdict] = []
         try:
@@ -515,6 +534,7 @@ class GeminiImageProvider(ImageProvider):
                     deterministic_reject_count=sum(
                         item.screening_stage == "deterministic_precheck" for item in verdicts
                     ),
+                    generation_provider=_generation_provider(providers_used),
                 )
             last_verdict = verdicts[-1] if verdicts else None
         except (httpx.HTTPError, ValueError, HTTPException) as exc:
@@ -560,6 +580,7 @@ class GeminiImageProvider(ImageProvider):
             deterministic_reject_count=sum(
                 item.screening_stage == "deterministic_precheck" for item in verdicts
             ),
+            generation_provider=_generation_provider(providers_used),
         )
 
     async def generate_medical(
@@ -583,17 +604,21 @@ class GeminiImageProvider(ImageProvider):
             feedback=feedback,
             has_previous_result=previous_image is not None,
         )
+        providers_used: set[str] = set()
+
         async def generate_candidate(correction: str | None) -> tuple[bytes, str]:
             attempt_prompt = prompt
             if correction:
                 attempt_prompt += "\nQUALITY JUDGE CORRECTION — obey precisely:\n" + correction
-            return await _gemini_generate(
+            result = await _gemini_generate(
                     data=data,
                     mime_type=mime_type,
                     prompt=attempt_prompt,
                     previous_image=previous_image,
                     image_size=requested_image_size,
+                    provider_trace=providers_used,
                 )
+            return self._observe_candidate(result)
 
         verdicts: list[QualityVerdict] = []
         try:
@@ -640,6 +665,7 @@ class GeminiImageProvider(ImageProvider):
                     deterministic_reject_count=sum(
                         item.screening_stage == "deterministic_precheck" for item in verdicts
                     ),
+                    generation_provider=_generation_provider(providers_used),
                 )
             last_verdict = verdicts[-1] if verdicts else None
         except (httpx.HTTPError, ValueError, HTTPException) as exc:
@@ -684,7 +710,16 @@ class GeminiImageProvider(ImageProvider):
             deterministic_reject_count=sum(
                 item.screening_stage == "deterministic_precheck" for item in verdicts
             ),
+            generation_provider=_generation_provider(providers_used),
         )
+
+
+def _generation_provider(providers_used: set[str]) -> str:
+    if "openai" in providers_used:
+        return "openai"
+    if "gemini" in providers_used:
+        return "gemini"
+    return "unknown"
 
 
 async def _openai_json_response(
@@ -692,9 +727,10 @@ async def _openai_json_response(
     content: list[dict[str, Any]],
     schema_name: str,
     schema: dict[str, Any],
+    model: str | None = None,
 ) -> dict[str, Any]:
     request_body = {
-        "model": settings.openai_analysis_model,
+        "model": model or settings.openai_analysis_model,
         "input": [{"role": "user", "content": content}],
         "text": {
             "format": {
@@ -758,7 +794,7 @@ async def _openai_quality_judge(
         {
             "type": "input_image",
             "image_url": _data_url(original_data, original_mime),
-            "detail": "low",
+            "detail": "high",
         },
     ]
     for index, (data, mime) in enumerate(candidates, start=1):
@@ -768,13 +804,14 @@ async def _openai_quality_judge(
             {
                 "type": "input_image",
                 "image_url": _data_url(optimized, optimized_mime),
-                "detail": "low",
+                "detail": "high",
             },
         ])
     payload = await _openai_json_response(
         content=content,
         schema_name="generation_quality_verdicts",
         schema=_quality_verdicts_schema(len(candidates)),
+        model=settings.openai_judge_model or settings.openai_analysis_model,
     )
     verdicts = [
         QualityVerdict.model_validate(item)
@@ -809,6 +846,17 @@ identity_drift, head_or_hair_cropped, framing_changed, face_or_head_widened,
 cheekbone_expanded, cheek_hollowed, locked_region_changed, unreadable_candidate.
 
 Rules:
+- Every score is an integer on a 0–100 scale. Never use a 0–5 or 0–10 scale.
+- 95–100 means visually indistinguishable compliance; 90–94 means strong compliance with
+  only tiny harmless rendering differences; 80–89 means noticeable risk or drift;
+  below 80 means clear failure. Scores and written summary must agree.
+- identityScore: 90+ only when this is unmistakably the same person; score below 86 for
+  any meaningful change to face shape, feature proportions, age impression, expression or gaze.
+- framingScore/headBoundaryScore/lockedRegionScore: minor generative pixel differences are
+  acceptable; penalize composition, geometry or semantic changes, not harmless compression or texture noise.
+- targetChangeScore: 65+ for a restrained but clearly perceptible and coherent requested
+  structural change; below 65 when the result is unchanged or relies only on lighting,
+  skin, makeup or sharpening. Do not require an exaggerated or identity-changing edit.
 - Same person, age impression, ethnicity, expression and gaze must remain.
 - Head top, hair crown, hair corners and original four-edge content must remain.
 - No horizontal enlargement of head, face, cheekbones, midface or jaw.
@@ -851,7 +899,19 @@ def _quality_verdicts_schema(candidate_count: int) -> dict[str, Any]:
             "locked_region_score": score,
             "hard_failures": {
                 "type": "array",
-                "items": {"type": "string"},
+                "items": {
+                    "type": "string",
+                    "enum": [
+                        "identity_drift",
+                        "head_or_hair_cropped",
+                        "framing_changed",
+                        "face_or_head_widened",
+                        "cheekbone_expanded",
+                        "cheek_hollowed",
+                        "locked_region_changed",
+                        "unreadable_candidate",
+                    ],
+                },
             },
             "summary": {"type": "string"},
             "eligible": {"type": "boolean"},
@@ -880,6 +940,7 @@ async def _gemini_generate(
     prompt: str,
     previous_image: ImageInput | None = None,
     image_size: str = "2K",
+    provider_trace: set[str] | None = None,
 ) -> tuple[bytes, str]:
     parts: list[dict[str, Any]] = [
         {"text": prompt},
@@ -942,16 +1003,160 @@ async def _gemini_generate(
         )
     if not response.is_success:
         message = response.json().get("error", {}).get("message", "Gemini 请求失败")
+        if settings.openai_image_model and _should_fallback_from_gemini(
+            response.status_code, message
+        ):
+            result = await _openai_image_edit(
+                data=data,
+                mime_type=mime_type,
+                prompt=prompt,
+                previous_image=previous_image,
+            )
+            if provider_trace is not None:
+                provider_trace.add("openai")
+            return result
         raise ValueError(message[:160])
     for candidate in response.json().get("candidates", []):
         for part in candidate.get("content", {}).get("parts", []):
             inline = part.get("inlineData") or part.get("inline_data")
             if inline and inline.get("data"):
+                if provider_trace is not None:
+                    provider_trace.add("gemini")
                 return (
                     base64.b64decode(inline["data"]),
                     inline.get("mimeType") or inline.get("mime_type") or "image/png",
                 )
     raise ValueError("Gemini 没有返回图片")
+
+
+def _should_fallback_from_gemini(status_code: int, message: str) -> bool:
+    normalized = message.lower()
+    availability_markers = (
+        "billing",
+        "credit",
+        "quota",
+        "rate limit",
+        "resource_exhausted",
+        "temporarily unavailable",
+        "overloaded",
+    )
+    return status_code == 429 or status_code >= 500 or any(
+        marker in normalized for marker in availability_markers
+    )
+
+
+def _openai_image_size(data: bytes) -> str:
+    dimensions = _image_dimensions(data)
+    if not dimensions:
+        return "1024x1024"
+    width, height = dimensions
+    if width / height < 0.9:
+        return "1024x1536"
+    if width / height > 1.1:
+        return "1536x1024"
+    return "1024x1024"
+
+
+async def _openai_image_edit(
+    *,
+    data: bytes,
+    mime_type: str,
+    prompt: str,
+    previous_image: ImageInput | None = None,
+    edit_mask: ImageInput | None = None,
+) -> tuple[bytes, str]:
+    prompt = f"""
+You are a precision portrait-retouching engine. Execute the allowed structural edit; do not return a near-copy.
+Pixel movement or percentage instructions in the allowed-change list are hard targets. The difference must be
+clearly visible when the app later compares before and after, while preserving identity. Output exactly one edited
+photograph: never create a split view, before/after panel, collage, border, caption or text. Never substitute lighting,
+smoothing, makeup, color grading or sharpening for the requested geometry. All locked regions and the original
+composition remain immutable.
+
+{prompt}
+""".strip()
+    if edit_mask is not None:
+        source_upload, mask_upload = _prepare_openai_mask(data, edit_mask[0])
+        files: list[tuple[str, tuple[str, bytes, str]]] = [
+            ("image[]", ("original.png", source_upload, "image/png")),
+            ("mask", ("mask.png", mask_upload, "image/png")),
+        ]
+    else:
+        files = [("image[]", ("original.jpg", data, mime_type))]
+    if previous_image is not None:
+        previous_data, previous_mime = _optimize_image(
+            *previous_image,
+            max_dimension=2048,
+            quality=92,
+        )
+        files.append(("image[]", ("previous.jpg", previous_data, previous_mime)))
+    form = {
+        "model": settings.openai_image_model,
+        "prompt": prompt,
+        "quality": settings.openai_image_quality,
+        "size": _openai_image_size(data),
+        "output_format": "jpeg",
+        "output_compression": "92",
+        "n": "1",
+    }
+    if settings.openai_image_model in {"gpt-image-1", "gpt-image-1.5"}:
+        form["input_fidelity"] = "high"
+    async with httpx.AsyncClient(timeout=300) as client:
+        response = await client.post(
+            "https://api.openai.com/v1/images/edits",
+            headers={"Authorization": f"Bearer {settings.openai_api_key}"},
+            data=form,
+            files=files,
+        )
+    if not response.is_success:
+        message = response.json().get("error", {}).get("message", "OpenAI 图片编辑请求失败")
+        raise ValueError(message[:240])
+    images = response.json().get("data") or []
+    if not images or not images[0].get("b64_json"):
+        raise ValueError("OpenAI 图片编辑没有返回图片")
+    generated = base64.b64decode(images[0]["b64_json"])
+    return _restore_source_aspect(generated, data), "image/jpeg"
+
+
+def _prepare_openai_mask(source_data: bytes, mask_data: bytes) -> tuple[bytes, bytes]:
+    with Image.open(io.BytesIO(source_data)) as source_original:
+        source = ImageOps.exif_transpose(source_original).convert("RGBA")
+    with Image.open(io.BytesIO(mask_data)) as mask_original:
+        normalized_mask = ImageOps.exif_transpose(mask_original)
+        if "A" in normalized_mask.getbands():
+            mask = normalized_mask.convert("RGBA")
+        else:
+            alpha = normalized_mask.convert("L")
+            mask = Image.new("RGBA", normalized_mask.size, (255, 255, 255, 255))
+            mask.putalpha(alpha)
+        if mask.size != source.size:
+            mask = mask.resize(source.size, Image.Resampling.NEAREST)
+    source_output, mask_output = io.BytesIO(), io.BytesIO()
+    source.save(source_output, format="PNG", optimize=True)
+    mask.save(mask_output, format="PNG", optimize=True)
+    return source_output.getvalue(), mask_output.getvalue()
+
+
+def _restore_source_aspect(result_data: bytes, source_data: bytes) -> bytes:
+    """Center-crop fixed-ratio provider output back to the source canvas."""
+    with Image.open(io.BytesIO(source_data)) as source:
+        source_size = source.size
+        source_ratio = source.width / source.height
+    with Image.open(io.BytesIO(result_data)) as result_original:
+        result = ImageOps.exif_transpose(result_original).convert("RGB")
+        result_ratio = result.width / result.height
+        if result_ratio > source_ratio:
+            target_width = max(1, round(result.height * source_ratio))
+            left = (result.width - target_width) // 2
+            result = result.crop((left, 0, left + target_width, result.height))
+        elif result_ratio < source_ratio:
+            target_height = max(1, round(result.width / source_ratio))
+            top = (result.height - target_height) // 2
+            result = result.crop((0, top, result.width, top + target_height))
+        result = result.resize(source_size, Image.Resampling.LANCZOS)
+        output = io.BytesIO()
+        result.save(output, format="JPEG", quality=94, optimize=True)
+        return output.getvalue()
 
 
 def _language_rule(locale: str) -> str:
